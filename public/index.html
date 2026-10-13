@@ -291,8 +291,8 @@ async function fetchViaProxy(url){
 function isoDur(d){if(!d)return 0;const m=String(d).match(/P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?/i);if(!m)return 0;return(+m[1]||0)*1440+(+m[2]||0)*60+(+m[3]||0)}
 function findRecipeLD(doc){const out=[];
  const walk=n=>{if(!n)return;if(Array.isArray(n))return n.forEach(walk);if(typeof n!=='object')return;
-  const t=n['@type'];if((Array.isArray(t)?t:[t]).includes('Recipe'))out.push(n);if(n['@graph'])walk(n['@graph'])};
- doc.querySelectorAll('script[type="application/ld+json"]').forEach(s=>{try{walk(JSON.parse(s.textContent))}catch(e){}});
+  const t=n['@type'];if((Array.isArray(t)?t:[t]).includes('Recipe'))out.push(n);if(n['@graph'])walk(n['@graph']);if(n.mainEntity)walk(n.mainEntity);if(n.itemListElement)walk(n.itemListElement)};
+ doc.querySelectorAll('script[type="application/ld+json"]').forEach(s=>{const raw=s.textContent;try{walk(JSON.parse(raw))}catch(e){try{walk(JSON.parse(raw.replace(/[\u0000-\u001f]+/g,' ')))}catch(e2){}}});
  return out[0]}
 function flattenInstr(x){if(!x)return[];if(typeof x==='string')return x.split(/\n+/).map(clean).filter(Boolean);
  if(Array.isArray(x))return x.flatMap(flattenInstr);
@@ -302,7 +302,7 @@ function metaTag(doc,p){const e=doc.querySelector(`meta[property="${p}"],meta[na
 function heurDoc(doc){const out={ingredients:[],method:[]};
  for(const h of doc.querySelectorAll('h1,h2,h3,h4,h5,h6')){
   const t=h.textContent.trim();
-  const kind=/^ingredients?\b/i.test(t)?'ingredients':/^(method|instructions?|directions?|preparation|steps)\b/i.test(t)?'method':null;
+  const kind=/^(ingredients?|ingredienser|du skal bruge|what you(?:'|’)?ll need)\b/i.test(t)?'ingredients':/^(method|instructions?|directions?|preparation|steps|fremgangsm[åa]de|sådan gør du|s[åa]dan g[øo]r du|tilberedning|frem?gangsm[åa]den)\b/i.test(t)?'method':null;
   if(!kind||out[kind].length)continue;
   let el=h;for(let i=0;i<6;i++){el=el.nextElementSibling;if(!el)break;
    const lis=[...el.querySelectorAll('li')];if(el.matches('li'))lis.push(el);
@@ -311,8 +311,8 @@ function heurDoc(doc){const out={ingredients:[],method:[]};
  return out}
 function splitText(t){
  const lines=(t||'').split(/\r?\n/).map(l=>l.trim());
- const isIng=l=>/^\W*(ingredients?|what you(?:'|’)?ll need|you will need|shopping list)\W*$/i.test(l);
- const isMeth=l=>/^\W*(method|instructions?|directions?|steps?|preparation|how to (?:make|cook)(?: it)?|procedure)\W*$/i.test(l);
+ const isIng=l=>/^\W*(ingredients?|ingredienser|du skal bruge|what you(?:'|’)?ll need|you will need|shopping list)\W*$/i.test(l);
+ const isMeth=l=>/^\W*(method|instructions?|directions?|steps?|preparation|fremgangsm[åa]de|s[åa]dan g[øo]r du|tilberedning|how to (?:make|cook)(?: it)?|procedure)\W*$/i.test(l);
  const stop=l=>/^(https?:|follow|subscribe|music|#|\d{1,2}:\d{2}|connect|business|equipment|social|©)/i.test(l);
  let mode=null,ing=[],met=[],found=false;
  for(const l of lines){
@@ -329,11 +329,13 @@ function splitText(t){
  }
  return{ingredients:ing,method:met}}
 const ytId=u=>{const m=u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null};
-async function importWeb(url){
+const APP_VERSION='2026-10-13 link-import v2';
+async function importWeb(url,allowAI=true){
  const html=await fetchViaProxy(url);
  const doc=new DOMParser().parseFromString(html,'text/html');
  const ld=findRecipeLD(doc);
- const r={title:'',url,source:host(url),image:'',time:0,servings:0,ingredients:[],method:[],tags:[]};
+ const r={title:'',url,source:host(url),image:'',time:0,servings:0,ingredients:[],method:[],tags:[],diag:[]};
+ r.diag.push('page read: '+Math.round(html.length/1000)+' kB, '+(ld?'recipe data found':'no recipe data in page'));
  if(ld){
   r.title=clean(ld.name);
   r.ingredients=(Array.isArray(ld.recipeIngredient)?ld.recipeIngredient:[]).map(clean).filter(Boolean);
@@ -346,6 +348,25 @@ async function importWeb(url){
  if(!r.title)r.title=clean(metaTag(doc,'og:title')||doc.title);
  if(!r.image)r.image=metaTag(doc,'og:image');
  if(!r.ingredients.length||!r.method.length){const h=heurDoc(doc);if(!r.ingredients.length)r.ingredients=h.ingredients;if(!r.method.length)r.method=h.method}
+ r.diag.push('read locally: '+r.ingredients.length+' ingredients, '+r.method.length+' steps');
+ if(allowAI&&(!r.ingredients.length||!r.method.length)){
+  try{
+   const resp=await authedFetch('/api/read-recipe-page',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})});
+   let x=null;try{x=await resp.json()}catch(e){}
+   if(!resp.ok||!x||x.error){r.diag.push('Claude fallback failed: '+((x&&x.error)||('server answered '+resp.status)))}
+   else{
+    const ai=a=>(Array.isArray(a)?a:[]).map(v=>clean(v)).filter(Boolean);
+    if(!r.ingredients.length)r.ingredients=ai(x.ingredients);
+    if(!r.method.length)r.method=ai(x.method);
+    if(!r.title&&x.title)r.title=clean(x.title);
+    if(!r.time&&x.time_minutes)r.time=+x.time_minutes||0;
+    if(!r.servings&&x.servings)r.servings=+x.servings||0;
+    if(!r.tags.length&&Array.isArray(x.tags))r.tags=x.tags.slice(0,3).map(t=>String(t).toLowerCase());
+    r.diag.push('Claude read: '+ai(x.ingredients).length+' ingredients, '+ai(x.method).length+' steps'+(x.problem?(' ('+x.problem+')'):''));
+    if(r.ingredients.length||r.method.length)r.note='Read from the page by Claude. Give it a quick check.'+(x.problem?' '+x.problem:'');
+   }
+  }catch(e){r.diag.push('Claude fallback error: '+((e&&e.message)||e))}
+ }
  try{if(r.image)r.image=new URL(r.image,url).href}catch(e){}
  return r}
 async function importYT(url,id){
@@ -358,7 +379,7 @@ async function importYT(url,id){
  const sp=splitText(desc);r.ingredients=sp.ingredients;r.method=sp.method;r.note=desc?'':'Could not read the video description.';
  if(!r.ingredients.length||!r.method.length){ // many creators link the written recipe in the description
   const links=(desc.match(/https?:\/\/[^\s)]+/g)||[]).filter(u=>!/youtube|youtu\.be|instagram|facebook|twitter|tiktok|patreon|amazon|amzn|spotify|discord|linktr|x\.com/i.test(u)).slice(0,2);
-  for(const l of links){try{const w=await importWeb(l);if(w.ingredients.length&&w.method.length){r.ingredients=w.ingredients;r.method=w.method;r.time=w.time;r.servings=w.servings;r.note='Ingredients and method came from the recipe link in the video description.';break}}catch(e){}}
+  for(const l of links){try{const w=await importWeb(l,false);if(w.ingredients.length&&w.method.length){r.ingredients=w.ingredients;r.method=w.method;r.time=w.time;r.servings=w.servings;r.note='Ingredients and method came from the recipe link in the video description.';break}}catch(e){}}
  }
  if(!r.ingredients.length&&!r.method.length)r.note=(r.note||'')+' No ingredients were found in the description — paste them below.';
  r.raw=desc;return r}
@@ -519,7 +540,7 @@ function viewLog(){
  for(const l of log){const m=fmt(l.date,{month:'long',year:'numeric'});if(m!==mon){h+=`<h3>${m}</h3>`;mon=m}
   const r=l.recipeId?rec(l.recipeId):null;
   h+=`<div class="le"><div class="dt"><b>${parseISO(l.date).getDate()}</b>${fmt(l.date,{weekday:'short'})}</div><div class="m"><div>${l.meal==='lunch'?'<span class="chip">Lunch</span> ':''}${r?`<a href="#" data-act="openRecipe" data-id="${r.id}"><b>${esc(r.title)}</b></a>`:`<b>${esc(l.title||'Meal')}</b>`} ${stars(l.rating)}</div>${l.notes?`<div class="mut sm">${esc(l.notes)}</div>`:''}</div><div><button class="sm" data-act="logEdit" data-id="${l.id}">Edit</button> <button class="sm danger" data-act="logDel" data-id="${l.id}">×</button></div></div>`}
- h+=`<details style="margin-top:30px"><summary>Backup &amp; data</summary><p class="mut sm">${CLOUD.user?`Signed in as ${esc(CLOUD.user.email)}. `:''}Everything is saved to your shared household storage, so every signed-in device sees the same recipes, plans, logbook and shopping list. Export a backup now and then.</p><div class="row"><button data-act="export">Export backup</button><button data-act="importFile">Restore backup</button><button data-act="signOut">Sign out</button><button class="danger" data-act="wipe">Erase everything</button></div><input type="file" id="file" accept=".json" hidden></details>`;
+ h+=`<details style="margin-top:30px"><summary>Backup &amp; data</summary><p class="mut sm">${CLOUD.user?`Signed in as ${esc(CLOUD.user.email)}. `:''}App version ${APP_VERSION}. Everything is saved to your shared household storage, so every signed-in device sees the same recipes, plans, logbook and shopping list. Export a backup now and then.</p><div class="row"><button data-act="export">Export backup</button><button data-act="importFile">Restore backup</button><button data-act="signOut">Sign out</button><button class="danger" data-act="wipe">Erase everything</button></div><input type="file" id="file" accept=".json" hidden></details>`;
  return h}
 function viewTonight(){
  const g=ui.sg,R=S.rules,days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],dn=[1,2,3,4,5,6,0];
@@ -666,10 +687,10 @@ function logModal(id,pre){
 const val=id=>$('#'+id)?.value??'';
 async function doImport(){
  const url=val('impUrl').trim();if(!url)return;const st=$('#impStatus'),btn=$('#impBtn');
- st.className='status';st.textContent='Fetching… this can take up to 20 seconds.';btn.disabled=true;
+ st.className='status';st.textContent='Fetching… this can take up to 30 seconds.';btn.disabled=true;
  try{const r=await importURL(url);
-  if(r.ingredients.length&&r.method.length){r.id=uid();r.added=today();r.status='test';S.recipes.unshift(r);save();render();toast('Recipe imported — marked as a new test');openRecipe(r.id)}
-  else{btn.disabled=false;st.textContent='';editRecipe(null,r,r.note||'We found part of the recipe — please check and fill in what\'s missing, then save.')}
+  if(r.ingredients.length&&r.method.length){r.id=uid();r.added=today();r.status='test';S.recipes.unshift(r);save();render();toast(r.note&&/Read from the page by Claude/.test(r.note)?'Imported with Claude’s help — please check it. Marked as a new test':'Recipe imported — marked as a new test');openRecipe(r.id)}
+  else{btn.disabled=false;st.textContent='';editRecipe(null,r,(r.note||'We found part of the recipe — please check and fill in what\'s missing, then save.')+(r.diag&&r.diag.length?' [Details: '+r.diag.join('; ')+']':''))}
  }catch(e){btn.disabled=false;st.className='status err';st.innerHTML='Couldn\'t load that link ('+esc(e.message)+'). Some sites block automated readers — use “Add by hand” and paste the text instead.'}
 }
 function saveRecipeForm(id){
