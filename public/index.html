@@ -329,7 +329,7 @@ function splitText(t){
  }
  return{ingredients:ing,method:met}}
 const ytId=u=>{const m=u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null};
-const APP_VERSION='2026-10-13 link-import v2';
+const APP_VERSION='2026-10-13 link-import v3 youtube';
 async function importWeb(url,allowAI=true){
  const html=await fetchViaProxy(url);
  const doc=new DOMParser().parseFromString(html,'text/html');
@@ -370,18 +370,31 @@ async function importWeb(url,allowAI=true){
  try{if(r.image)r.image=new URL(r.image,url).href}catch(e){}
  return r}
 async function importYT(url,id){
- const r={title:'',url,source:'YouTube',image:`https://i.ytimg.com/vi/${id}/hqdefault.jpg`,time:0,servings:0,ingredients:[],method:[],tags:[]};
+ const r={title:'',url,source:'YouTube',image:`https://i.ytimg.com/vi/${id}/hqdefault.jpg`,time:0,servings:0,ingredients:[],method:[],tags:[],diag:[]};
  try{const j=await(await fetch('https://noembed.com/embed?url='+encodeURIComponent('https://www.youtube.com/watch?v='+id))).json();r.title=j.title||''}catch(e){}
  let desc='';
- try{const html=await fetchViaProxy('https://www.youtube.com/watch?v='+id);
-  const m=html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);if(m)desc=JSON.parse('"'+m[1]+'"');
-  if(!r.title){const t=html.match(/<title>(.*?)<\/title>/);if(t)r.title=clean(t[1]).replace(/ - YouTube$/,'')}}catch(e){}
- const sp=splitText(desc);r.ingredients=sp.ingredients;r.method=sp.method;r.note=desc?'':'Could not read the video description.';
+ try{
+  const resp=await authedFetch('/api/read-youtube',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
+  let x=null;try{x=await resp.json()}catch(e){}
+  if(!resp.ok||!x||x.error)r.diag.push('video read failed: '+((x&&x.error)||('server answered '+resp.status)));
+  else{
+   const ai=a=>(Array.isArray(a)?a:[]).map(v=>clean(v)).filter(Boolean);
+   desc=x.description||'';
+   r.ingredients=ai(x.ingredients);r.method=ai(x.method);
+   if(!r.title)r.title=clean(x.title||x.videoTitle||'');
+   if(x.time_minutes)r.time=+x.time_minutes||0;if(x.servings)r.servings=+x.servings||0;
+   if(Array.isArray(x.tags))r.tags=x.tags.slice(0,3).map(t=>String(t).toLowerCase());
+   const d=x.diag||{};
+   r.diag.push('description: '+(d.description||0)+' characters, captions: '+(d.captions||0)+' characters');
+   r.diag.push('Claude read: '+r.ingredients.length+' ingredients, '+r.method.length+' steps'+(x.problem?(' ('+x.problem+')'):''));
+   if(r.ingredients.length||r.method.length)r.note='Read from the video description'+((d.captions||0)>0?' and captions':'')+' by Claude. Give it a quick check.'+(x.problem?' '+x.problem:'');
+  }
+ }catch(e){r.diag.push('video read error: '+((e&&e.message)||e))}
  if(!r.ingredients.length||!r.method.length){ // many creators link the written recipe in the description
   const links=(desc.match(/https?:\/\/[^\s)]+/g)||[]).filter(u=>!/youtube|youtu\.be|instagram|facebook|twitter|tiktok|patreon|amazon|amzn|spotify|discord|linktr|x\.com/i.test(u)).slice(0,2);
-  for(const l of links){try{const w=await importWeb(l,false);if(w.ingredients.length&&w.method.length){r.ingredients=w.ingredients;r.method=w.method;r.time=w.time;r.servings=w.servings;r.note='Ingredients and method came from the recipe link in the video description.';break}}catch(e){}}
+  for(const l of links){try{const w=await importWeb(l,true);if(w.ingredients.length&&w.method.length){r.ingredients=w.ingredients;r.method=w.method;r.time=r.time||w.time;r.servings=r.servings||w.servings;r.note='Ingredients and method came from the recipe link in the video description.';r.diag.push('used recipe link '+host(l));break}}catch(e){}}
  }
- if(!r.ingredients.length&&!r.method.length)r.note=(r.note||'')+' No ingredients were found in the description — paste them below.';
+ if(!r.ingredients.length&&!r.method.length)r.note=(r.note||'')+' No recipe was found for this video — paste the ingredients and method below.';
  r.raw=desc;return r}
 async function importURL(url){url=url.trim();if(!/^https?:\/\//i.test(url))url='https://'+url;const y=ytId(url);return y?importYT(url,y):importWeb(url)}
 
