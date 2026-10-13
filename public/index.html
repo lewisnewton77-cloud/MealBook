@@ -243,6 +243,14 @@ input[type=range]{accent-color:var(--accent)}
 }
 @media(max-width:560px){.sgi{flex-direction:column;text-align:center}.sgb .rm{justify-content:center}.sgb .row{justify-content:center}.sg{border-radius:40px 0 0 40px;padding-left:22px}.le .disc{--sz:52px!important}.le{gap:12px}}
 
+/* planner picker */
+.ptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px}
+.pt{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:16px 8px 14px;border-radius:28px;background:var(--card);border:1px solid var(--line);font-weight:400;cursor:pointer;height:auto}
+.pt:hover{border-color:var(--accent);background:var(--card)}
+.pt:hover .disc{box-shadow:0 0 0 3px var(--card),0 0 0 5px var(--accent)}
+.pt .disc{box-shadow:0 0 0 3px var(--card),0 0 0 4px var(--ink)}
+.pt .ptt{font-size:13px;font-weight:700;line-height:1.2;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
+#pp_list{max-height:52vh}
 /* ---- sign-in gate ---- */
 #gate{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
 #gate[hidden]{display:none}
@@ -309,13 +317,23 @@ const rec=id=>S.recipes.find(r=>r.id===id);
 /* ---------- recipe analysis ---------- */
 const MEAT=/\b(chicken|beef|pork|lamb|bacon|sausages?|mince|ham|turkey|duck|steak|chorizo|prosciutto|salami|veal|gammon|pancetta|meatballs?)\b/i;
 const FISH=/\b(salmon|cod|tuna|prawns?|shrimps?|fish|haddock|mackerel|anchov\w*|squid|mussels?|trout|sardines?|seabass|crab|lobster|scallops?)\b/i;
-function protein(r){const t=(r.title+' '+r.ingredients.join(' '));return MEAT.test(t)?'meat':FISH.test(t)?'fish':'veg'}
-function aisle(t){t=t.toLowerCase();
+const NOTMEAT=/\b(chicken|beef|lamb|pork|veg(?:etable)?|fish|mushroom)\s+(stock|broth|bouillon|cubes?|gravy)\b|\b(stock|broth|bouillon)\s+cubes?\b/ig;
+function protein(r){const tags=(r.tags||[]).map(x=>String(x).toLowerCase());
+ if(tags.some(x=>/^(vegetarian|vegan|veggie)$/.test(x)))return'veg';
+ const t=((r.title||'')+' '+(r.ingredients||[]).join(' ')).replace(NOTMEAT,' ');
+ return MEAT.test(t)?'meat':FISH.test(t)?'fish':'veg'}
+function aisle(t){t=t.toLowerCase().replace(/(\d)(?=[a-z])/g,'$1 ');
+ const stockish=/\b(stock|broth|bouillon|cubes?)\b/.test(t);
+ if(/\b(coconut|oat|soy|almond)\s+milk\b|\bcoconut\s+cream\b/.test(t))return'Cupboard';
+ if(/\b(black|white|cayenne|ground)\s+pepper|peppercorns?\b|\bpepper\s+flakes\b/.test(t))return'Cupboard';
+ if(/\bnoodles?\b/.test(t))return'Cupboard';
+ if(/\b(tin|tins|tinned|canned|can of|salt|peanut butter|nut butter|almond butter|tahini)\b/.test(t))return'Cupboard';
+ if(stockish)return'Cupboard';
  if(MEAT.test(t)||FISH.test(t))return'Meat & fish';
- if(/\b(milk|cream|butter|cheese|parmesan|yogh?urt|egg|mozzarella|feta|cheddar|creme|crème)\b/.test(t))return'Dairy & eggs';
- if(/\b(onion|garlic|potato|tomato|carrot|pepper|lemon|lime|basil|parsley|coriander|spinach|lettuce|cucumber|mushroom|courgette|zucchini|broccoli|ginger|chilli|celery|apple|banana|herb|leek|cabbage|bean|aubergine|avocado|mint|thyme|rosemary|sage|spring onion|fresh)\b/.test(t))return'Fruit & veg';
- if(/\b(bread|bun|wrap|tortilla|pitta|naan|roll|bagel)\b/.test(t))return'Bakery';
- if(/\b(rice|pasta|spaghetti|noodle|flour|sugar|oil|vinegar|stock|tin|can|chickpea|lentil|sauce|paste|spice|cumin|paprika|oregano|salt|pepper|honey|oats|coconut|soy|mustard|ketchup|beans)\b/.test(t))return'Cupboard';
+ if(/\b(milk|cream|butter|cheese|parmesan|yogh?urts?|eggs?|mozzarella|feta|cheddar|creme|crème|ricotta|halloumi|mascarpone|creme fraiche|crème fraîche)\b/.test(t))return'Dairy & eggs';
+ if(/\b(onions?|garlic|potato(?:es)?|tomato(?:es)?|carrots?|peppers?|lemons?|limes?|basil|parsley|coriander|spinach|lettuce|cucumbers?|mushrooms?|courgettes?|zucchini|broccoli|ginger|chill?ies|chill?i|celery|apples?|bananas?|herbs?|leeks?|cabbage|aubergines?|avocados?|mint|thyme|rosemary|sage|spring onions?|kale|squash|pumpkin|sweet ?potato(?:es)?|parsnips?|beetroot|fennel|asparagus|peas|corn|salad|oranges?|berries|strawberr\w+|grapes?)\b/.test(t))return'Fruit & veg';
+ if(/\b(bread|buns?|wraps?|tortillas?|pitta|naan|rolls?|bagels?|baguette|sourdough)\b/.test(t))return'Bakery';
+ if(/\b(rice|pasta|spaghetti|noodles?|flour|sugar|oil|vinegar|stock|tins?|cans?|chickpeas?|lentils?|sauce|paste|spices?|cumin|paprika|oregano|salt|pepper|honey|oats|coconut|soy|mustard|ketchup|beans|tinned|canned|cinnamon|turmeric|syrup|stock)\b/.test(t))return'Cupboard';
  return'Other'}
 const AISLES=['Fruit & veg','Meat & fish','Dairy & eggs','Bakery','Cupboard','Other'];
 
@@ -375,7 +393,7 @@ function splitText(t){
  }
  return{ingredients:ing,method:met}}
 const ytId=u=>{const m=u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null};
-const APP_VERSION='2026-10-13 link-import v3 youtube + discs';
+const APP_VERSION='2026-10-13 audit fixes v1';
 async function importWeb(url,allowAI=true){
  const html=await fetchViaProxy(url);
  const doc=new DOMParser().parseFromString(html,'text/html');
@@ -506,8 +524,12 @@ function addToShop(list,from){let n=0;
 /* ---------- planner / log helpers ---------- */
 function addPlan(date,entry){(S.plan[date]=S.plan[date]||[]).push(Object.assign({id:uid(),logged:false},entry));save()}
 function lastCooked(id,before){return S.log.filter(l=>l.recipeId===id&&l.date<=before).map(l=>l.date).sort().pop()||null}
-function mainOn(date){const l=S.log.find(x=>x.date===date&&x.recipeId&&rec(x.recipeId));if(l)return protein(rec(l.recipeId));
- const p=(S.plan[date]||[]).find(x=>x.recipeId&&rec(x.recipeId));return p?protein(rec(p.recipeId)):null}
+function dropRecipe(id){const r=rec(id);
+ S.log.forEach(l=>{if(l.recipeId===id&&!l.title&&!l.rt&&r)l.rt=r.title});
+ S.recipes=S.recipes.filter(x=>x.id!==id);
+ for(const k of Object.keys(S.plan)){S.plan[k]=S.plan[k].filter(e=>e.recipeId!==id||e.logged);if(!S.plan[k].length)delete S.plan[k]}}
+function mainOn(date){const l=S.log.find(x=>x.date===date&&x.meal!=='lunch'&&x.recipeId&&rec(x.recipeId));if(l)return protein(rec(l.recipeId));
+ const p=(S.plan[date]||[]).find(x=>x.meal!=='lunch'&&x.recipeId&&rec(x.recipeId));return p?protein(rec(p.recipeId)):null}
 
 /* ---------- suggester ---------- */
 const splitCSV=s=>String(s||'').toLowerCase().split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
@@ -588,17 +610,17 @@ function viewLog(){
  const rs=S.recipes.map(r=>({r,...rstats(r.id)})).filter(x=>x.n);
  const fav=rs.filter(x=>x.avg>=4).sort((a,b)=>b.avg-a.avg).slice(0,6);
  const most=[...rs].sort((a,b)=>b.n-a.n).slice(0,6);
- const t=today();const stale=[...rs].sort((a,b)=>a.last<b.last?-1:1).slice(0,6);
- const chips=(a,f)=>a.length?`<div class="mini">`+a.map(x=>`<div class="mi" data-act="openRecipe" data-id="${x.r.id}">${disc(x.r,60,false)}<span class="mt">${esc(x.r.title)}</span><span class="mm">${f(x)}</span>${x.r.time?`<span class="mm">${x.r.time} min</span>`:''}</div>`).join('')+'</div>':'<span class="mut sm">Nothing yet</span>';
+ const t=today();const staleDays=Math.max(1,+S.rules.noRepeatDays||14);const stale=rs.filter(x=>daysBetween(x.last,t)>=staleDays).sort((a,b)=>a.last<b.last?-1:1).slice(0,6);
+ const chips=(a,f,none)=>a.length?`<div class="mini">`+a.map(x=>`<div class="mi" data-act="openRecipe" data-id="${x.r.id}">${disc(x.r,60,false)}<span class="mt">${esc(x.r.title)}</span><span class="mm">${f(x)}</span>${x.r.time?`<span class="mm">${x.r.time} min</span>`:''}</div>`).join('')+'</div>':`<span class="mut sm">${none||'Nothing yet'}</span>`;
  let h=`<div class="row" style="justify-content:space-between"><h2 style="margin:0">Logbook</h2><button class="pri" data-act="logAdd">+ Log a meal</button></div>
  <div class="stat"><div class="card"><b>Favourites</b><div style="margin-top:6px">${chips(fav,x=>'★'+x.avg.toFixed(1))}</div></div>
  <div class="card"><b>Most cooked</b><div style="margin-top:6px">${chips(most,x=>x.n+'×')}</div></div>
- <div class="card"><b>Not had in a while</b><div style="margin-top:6px">${chips(stale,x=>daysBetween(x.last,t)+'d')}</div></div></div>`;
+ <div class="card"><b>Not had in a while</b> <span class="mut sm">(${staleDays}+ days)</span><div style="margin-top:6px">${chips(stale,x=>daysBetween(x.last,t)+' days ago','Nothing — you’ve had everything recently')}</div></div></div>`;
  if(!log.length)h+='<div class="empty">Nothing logged yet. Tick “Ate it” in the planner or use “Log a meal”.</div>';
  let mon='';
  for(const l of log){const m=fmt(l.date,{month:'long',year:'numeric'});if(m!==mon){h+=`<h3>${m}</h3>`;mon=m}
   const r=l.recipeId?rec(l.recipeId):null;
-  h+=`<div class="le"><div class="dt"><b>${parseISO(l.date).getDate()}</b>${fmt(l.date,{weekday:'short'})}</div>${disc(r,64)}<div class="m"><div>${l.meal==='lunch'?'<span class="chip">Lunch</span> ':''}${r?`<a href="#" data-act="openRecipe" data-id="${r.id}"><b>${esc(r.title)}</b></a>`:`<b>${esc(l.title||'Meal')}</b>`}</div>${rmeta(r,{rating:l.rating||0})}${l.notes?`<div class="mut sm">${esc(l.notes)}</div>`:''}</div><div><button class="sm" data-act="logEdit" data-id="${l.id}">Edit</button> <button class="sm danger" data-act="logDel" data-id="${l.id}">×</button></div></div>`}
+  h+=`<div class="le"><div class="dt"><b>${parseISO(l.date).getDate()}</b>${fmt(l.date,{weekday:'short'})}</div>${disc(r,64)}<div class="m"><div>${l.meal==='lunch'?'<span class="chip">Lunch</span> ':''}${r?`<a href="#" data-act="openRecipe" data-id="${r.id}"><b>${esc(r.title)}</b></a>`:`<b>${esc(l.title||l.rt||'Meal')}</b>`}</div>${rmeta(r,{rating:l.rating||0})}${l.notes?`<div class="mut sm">${esc(l.notes)}</div>`:''}</div><div><button class="sm" data-act="logEdit" data-id="${l.id}">Edit</button> <button class="sm danger" data-act="logDel" data-id="${l.id}">×</button></div></div>`}
  h+=`<details style="margin-top:30px"><summary>Backup &amp; data</summary><p class="mut sm">${CLOUD.user?`Signed in as ${esc(CLOUD.user.email)}. `:''}App version ${APP_VERSION}. Everything is saved to your shared household storage, so every signed-in device sees the same recipes, plans, logbook and shopping list. Export a backup now and then.</p><div class="row"><button data-act="export">Export backup</button><button data-act="importFile">Restore backup</button><button data-act="signOut">Sign out</button><button class="danger" data-act="wipe">Erase everything</button></div><input type="file" id="file" accept=".json" hidden></details>`;
  return h}
 function viewTonight(){
@@ -658,7 +680,7 @@ function verdictModal(id){const r=rec(id);if(!r)return;
  modal(`<h2 style="padding-right:30px">Verdict on “${esc(r.title)}”?</h2><p class="mut">This was a test recipe. Do we keep it?</p><div class="row" style="flex-direction:column;align-items:stretch"><button class="pri" data-act="setStatus" data-id="${id}" data-s="staple">Keep — one we'll make all the time</button><button data-act="setStatus" data-id="${id}" data-s="occasional">Keep — nice, but only now and then</button><button data-act="setStatus" data-id="${id}" data-s="test">Test it once more</button><button class="danger" data-act="binRecipe" data-id="${id}">Bin it</button><button data-act="close">Decide later</button></div>`)}
 
 /* ---------- lunch ---------- */
-function isLunch(r){return r.tags.some(t=>t.toLowerCase()==='lunch')}
+function isLunch(r){return (r.tags||[]).some(t=>t.toLowerCase()==='lunch')}
 function runLunch(){
  const g=ui.lu,L=S.lunch,R=S.rules,date=g.date;
  const avoid=splitCSV(R.avoid),pantry=splitCSV(g.pantry),removed={},scored=[];let poolN=0;
@@ -732,7 +754,7 @@ function planPicker(d){
  <div id="pp_list" style="margin-top:8px;max-height:45vh;overflow:auto">${ppList(d,'')}</div>
  <label class="f">…or something else (takeaway, leftovers, eating out)</label><div class="row"><input type="text" id="pp_free" placeholder="Takeaway"><button data-act="planFree" data-d="${d}">Add</button></div>`)}
 function ppList(d,q){q=q.toLowerCase();const l=S.recipes.filter(r=>!q||r.title.toLowerCase().includes(q));
- return l.length?l.map(r=>`<button class="pick" data-act="planPick" data-d="${d}" data-id="${r.id}">${esc(r.title)} <span class="mut sm">${r.time?r.time+' min':''}</span></button>`).join(''):'<p class="mut">No recipes found.</p>'}
+ return l.length?'<div class="ptiles">'+l.map(r=>`<button class="pt" data-act="planPick" data-d="${d}" data-id="${r.id}">${disc(r,76,false)}<span class="ptt">${esc(r.title)}</span>${rmeta(r)}</button>`).join('')+'</div>':'<p class="mut">No recipes found.</p>'}
 function logModal(id,pre){
  const e=id?S.log.find(l=>l.id===id):Object.assign({date:today(),recipeId:'',title:'',rating:0,notes:''},pre||{});
  window._logMeal=e.meal||'';modal(`<h2>${id?'Edit entry':'Log a meal'}</h2><label class="f">Date</label><input type="date" id="l_date" value="${e.date}">
@@ -748,11 +770,13 @@ async function doImport(){
  const url=val('impUrl').trim();if(!url)return;const st=$('#impStatus'),btn=$('#impBtn');
  st.className='status';st.textContent='Fetching… this can take up to 30 seconds.';btn.disabled=true;
  try{const r=await importURL(url);
-  if(r.ingredients.length&&r.method.length){r.id=uid();r.added=today();r.status='test';S.recipes.unshift(r);save();render();toast(r.note&&/Read from the page by Claude/.test(r.note)?'Imported with Claude’s help — please check it. Marked as a new test':'Recipe imported — marked as a new test');openRecipe(r.id)}
+  if(r.ingredients.length&&r.method.length){if(r.url&&S.recipes.some(x=>x.url===r.url)&&!confirm('This link is already in your recipes. Add it again?')){btn.disabled=false;st.textContent='';return}
+  delete r.diag;delete r.raw;delete r.note0;const note=r.note;delete r.note;r.id=uid();r.added=today();r.status='test';S.recipes.unshift(r);save();render();toast(note&&/Read from the page by Claude/.test(note)?'Imported with Claude’s help — please check it. Marked as a new test':'Recipe imported — marked as a new test');openRecipe(r.id)}
   else{btn.disabled=false;st.textContent='';editRecipe(null,r,(r.note||'We found part of the recipe — please check and fill in what\'s missing, then save.')+(r.diag&&r.diag.length?' [Details: '+r.diag.join('; ')+']':''))}
  }catch(e){btn.disabled=false;st.className='status err';st.innerHTML='Couldn\'t load that link ('+esc(e.message)+'). Some sites block automated readers — use “Add by hand” and paste the text instead.'}
 }
 function saveRecipeForm(id){
+ if(id&&!rec(id)){closeModal();toast('That recipe was deleted on another device');render();return}
  const lines=(s,m)=>s.split(/\r?\n/).map(x=>x.trim().replace(m?/^\d+[.)]\s*/:/^$/,'')).filter(Boolean);
  const r={title:val('e_title').trim()||'Untitled recipe',url:val('e_url').trim(),image:val('e_img').trim(),time:+val('e_time')||0,servings:+val('e_serv')||0,
   tags:val('e_tags').split(',').map(t=>t.trim().toLowerCase()).filter(Boolean),ingredients:lines(val('e_ing')),method:lines(val('e_met'),true)};
@@ -770,10 +794,10 @@ function act(a,d,el){
  case'openRecipe':openRecipe(d.id);break;
  case'editRecipe':editRecipe(d.id);break;
  case'saveRecipe':saveRecipeForm(d.id);break;
- case'delRecipe':if(confirm('Delete this recipe? Log entries are kept.')){S.recipes=S.recipes.filter(r=>r.id!==d.id);save();closeModal();render()}break;
+ case'delRecipe':if(confirm('Delete this recipe? Log entries are kept.')){dropRecipe(d.id);save();closeModal();render()}break;
  case'split':{const sp=splitText(val('e_raw'));if(sp.ingredients.length)$('#e_ing').value=sp.ingredients.join('\n');if(sp.method.length)$('#e_met').value=sp.method.join('\n');toast(sp.ingredients.length||sp.method.length?'Split — check and save':'Nothing recognised');break}
- case'addIng':{const r=rec(d.id);const n=addToShop([r.ingredients[+d.i]],r.title);toast(n?'Added to shopping list':'Already on the list');if(ui.tab==='shop')render();break}
- case'addAllIng':{const r=rec(d.id);const n=addToShop(r.ingredients,r.title);toast(`${n} item${n===1?'':'s'} added to the list`);break}
+ case'addIng':{const r=rec(d.id);if(!r)break;const n=addToShop([r.ingredients[+d.i]],r.title);toast(n?'Added to shopping list':'Already on the list');if(ui.tab==='shop')render();break}
+ case'addAllIng':{const r=rec(d.id);if(!r)break;const n=addToShop(r.ingredients,r.title);toast(`${n} item${n===1?'':'s'} added to the list`);break}
  case'planRecipe':pickDate('Plan this recipe',date=>{addPlan(date,{recipeId:d.id});closeModal();toast('Planned for '+fmt(date,{weekday:'long',day:'numeric',month:'short'}));render()});break;
  case'pdOk':{const v=val('pd');if(v&&window._cb)window._cb(v);break}
  case'logRecipe':logModal(null,{recipeId:d.id});break;
@@ -801,7 +825,8 @@ function act(a,d,el){
  case'logDel':if(confirm('Delete this entry?')){S.log=S.log.filter(l=>l.id!==d.id);save();render()}break;
  case'logSave':{const o={date:val('l_date')||today(),recipeId:val('l_rec'),title:val('l_title').trim(),rating:+val('l_rate'),notes:val('l_notes').trim(),meal:window._logMeal||''};
   if(!o.recipeId&&!o.title){toast('Pick a recipe or describe the meal');break}
-  if(d.id)Object.assign(S.log.find(l=>l.id===d.id),o);else S.log.push(Object.assign({id:uid()},o));
+  {const rr0=o.recipeId&&rec(o.recipeId);if(rr0)o.rt=rr0.title;
+  const ex=d.id&&S.log.find(l=>l.id===d.id);if(ex)Object.assign(ex,o);else S.log.push(Object.assign({id:uid()},o))}
   save();closeModal();render();toast('Logged');{const rr=o.recipeId&&rec(o.recipeId);if(rr&&rr.status==='test')verdictModal(rr.id)}break}
  case'export':{const b=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='mealbook-backup-'+today()+'.json';a.click();break}
  case'importFile':$('#file').click();break;
@@ -815,7 +840,7 @@ function act(a,d,el){
  case'stFilter':ui.st=d.s;render();break;
  case'setStatus':{const r=rec(d.id);if(!r)break;r.status=d.s;save();render();if(d.keep)openRecipe(d.id);else closeModal();toast(r.status?STATUS[r.status].l+' ✓':'Status cleared');break}
  case'binRecipe':{const r=rec(d.id);if(!r)break;if(!confirm('Bin “'+r.title+'”? Past log entries are kept.'))break;
-  S.recipes=S.recipes.filter(x=>x.id!==d.id);for(const k of Object.keys(S.plan))S.plan[k]=S.plan[k].filter(e=>e.recipeId!==d.id||e.logged);
+  dropRecipe(d.id);
   save();closeModal();render();toast('Binned');break}
  case'luGo':ui.lu.ex=new Set();runLunch();render();break;
  case'luNo':ui.lu.ex.add(d.id);runLunch();render();break;
@@ -880,16 +905,23 @@ function syncUp(){
  const cur=cloudDocs(),ops=[];
  cur.forEach((d,k)=>{const js=JSON.stringify(d);if(CLOUD.last.get(k)!==js){CLOUD.last.set(k,js);ops.push({op:'set',key:k,data:JSON.parse(js)})}});
  for(const k of [...CLOUD.last.keys()])if(!cur.has(k)){CLOUD.last.delete(k);ops.push({op:'del',key:k})}
- if(ops.length)Promise.resolve(FB.commit(ops)).catch(e=>toast('Could not save: '+((e&&e.message)||e)));
+ if(ops.length)Promise.resolve(FB.commit(ops)).catch(e=>{
+  ops.forEach(o=>{if(o.op==='del')CLOUD.last.set(o.key,'\u0000pending-delete');else CLOUD.last.delete(o.key)});
+  toast('Could not save — will retry ('+((e&&e.message)||e)+')');
+  clearTimeout(CLOUD.retry);CLOUD.retry=setTimeout(syncUp,8000)});
 }
 
+const STATUSES=['','test','staple','occasional'];
+function normRecipe(r){['tags','ingredients','method'].forEach(k=>{if(!Array.isArray(r[k]))r[k]=[]});
+ if(r.status&&!STATUSES.includes(r.status))r.status='';
+ r.title=r.title||'Untitled recipe';return r}
 // Applies a snapshot of one collection from the cloud. Returns true if anything changed.
 function applyCol(col,docs){
  const pre=col+'/',seen=new Set();let changed=false;
  for(const d of docs){const {id,...data}=d,k=pre+id,js=JSON.stringify(data);seen.add(k);if(CLOUD.last.get(k)!==js){changed=true;CLOUD.last.set(k,js)}}
  for(const k of [...CLOUD.last.keys()])if(k.startsWith(pre)&&!seen.has(k)){CLOUD.last.delete(k);changed=true}
  if(!changed)return false;
- if(col==='recipes')S.recipes=docs.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+ if(col==='recipes')S.recipes=docs.slice().map(normRecipe).sort((a,b)=>(b.ts||0)-(a.ts||0));
  else if(col==='log')S.log=docs;
  else if(col==='shopping')S.shopping=docs.slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
  else if(col==='plan'){S.plan={};docs.forEach(d=>{S.plan[d.id]=d.entries||[]})}
@@ -913,7 +945,7 @@ function startListening(){
 }
 
 function restoreFrom(j){
- S.recipes=j.recipes||[];S.plan=j.plan||{};S.log=j.log||[];S.shopping=j.shopping||[];
+ S.recipes=(j.recipes||[]).map(normRecipe);S.plan=j.plan||{};S.log=j.log||[];S.shopping=j.shopping||[];
  S.rules=Object.assign({},DEF_RULES,j.rules||{});S.lunch=Object.assign({},DEF_LUNCH,j.lunch||{});
  save();render();toast('Backup restored')}
 
@@ -941,10 +973,15 @@ function boot(){
  if(!window.FB){showGate('error',window.FB_ERROR||'could not load Firebase. Check your internet connection.');return}
  showGate('loading');
  FB.onAuth(u=>{
-  if(!u){stopListening();CLOUD.user=null;showGate('signedout');return}
+  if(!u){stopListening();CLOUD.user=null;S.recipes=[];S.plan={};S.log=[];S.shopping=[];$('#main').innerHTML='';showGate('signedout');return}
   CLOUD.user=u;showGate('loading','Opening your shared Mealbook…');startListening();
  });
 }
+let _day=today();
+function dayCheck(){const t=today();if(t===_day)return;
+ if(ui.sg.date===_day)ui.sg.date=t;if(ui.lu.date===_day)ui.lu.date=t;if(ui.ws===monday(_day))ui.ws=monday(t);
+ ui.sg.picks=null;ui.lu.picks=null;_day=t;if(CLOUD.on)softRender()}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)dayCheck()});window.addEventListener('focus',dayCheck);setInterval(dayCheck,60000);
 window.addEventListener('offline',()=>toast('Offline — changes will sync when you reconnect'));
 window.addEventListener('online',()=>toast('Back online'));
 
