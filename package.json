@@ -1,0 +1,7 @@
+{
+  "name": "mealbook",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Shared recipe book, planner and shopping list",
+  "engines": { "node": ">=18" }
+}
