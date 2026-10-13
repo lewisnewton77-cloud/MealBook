@@ -6,7 +6,7 @@ import { checkedUrl, fetchHtml, pageToText } from "../lib/page.mjs";
 export const config = { path: "/api/read-recipe-page", method: "POST" };
 
 const PROMPT =
-  'Below is the text of a web page that should contain one cooking recipe. Extract it. Reply with ONLY a JSON object and no other text: {"title":string,"servings":number or null,"time_minutes":number or null,"tags":[up to 3 short lowercase tags],"ingredients":[one string per ingredient including its quantity, in the order the page lists them],"method":[one string per step, in the correct cooking order, without step numbers]}. Use only what is on the page and keep its original language. If the page has method steps but no ingredient list, build the ingredients from the quantities mentioned in the method and say nothing else. If there is no recipe at all, return {"ingredients":[],"method":[]}.';
+  'Below is the text of a web page that should contain one cooking recipe. Extract it. Reply with ONLY a JSON object and no other text: {"title":string,"servings":number or null,"time_minutes":number or null,"tags":[up to 3 short lowercase tags],"ingredients":[one string per ingredient including its quantity, in the order the page lists them],"method":[one string per step, in the correct cooking order, without step numbers],"problem":string or null}. Use only what is on the page and keep its original language. Look in the page text AND in any structured or embedded data for the ingredient list. If the page really has no ingredient list, return an empty ingredients array and set problem to a short sentence saying so; do not invent ingredients. If there is no recipe at all, return empty arrays and explain in problem. Otherwise problem is null.';
 
 export default async (req) => {
   try {

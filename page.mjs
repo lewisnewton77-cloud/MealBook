@@ -57,11 +57,19 @@ const decode = (s) =>
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d))
     .replace(/&([a-z0-9]+);/gi, (m, n) => ENT[n.toLowerCase()] ?? m);
 
-// Turns a page into readable text, one line per block, and keeps any recipe data blocks.
-export function pageToText(html, maxChars = 45000) {
+// Turns a page into readable text, one line per block, and keeps recipe data blocks that
+// modern sites embed in scripts (many build the ingredient list in the browser from that data).
+export function pageToText(html, maxChars = 60000) {
   const ld = [];
   for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
     if (/"Recipe"/.test(m[1])) ld.push(m[1].trim().slice(0, 12000));
+  }
+  const blobs = [];
+  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const attrs = m[1], body = m[2].trim();
+    if (!body || /ld\+json/i.test(attrs)) continue;
+    const isData = /__NEXT_DATA__|__NUXT__|application\/json|__APOLLO_STATE__|__INITIAL_STATE__|__PRELOADED_STATE__/i.test(attrs + body.slice(0, 80));
+    if (isData && /ingredient|instruction|method|recipe/i.test(body)) blobs.push(body.slice(0, 40000));
   }
   let t = html
     .replace(/<!--[\s\S]*?-->/g, " ")
@@ -74,6 +82,7 @@ export function pageToText(html, maxChars = 45000) {
     .map((l) => l.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
-  const body = (ld.length ? "STRUCTURED DATA FROM PAGE:\n" + ld.join("\n") + "\n\n" : "") + "PAGE TEXT:\n" + t;
-  return body.slice(0, maxChars);
+  let out = (ld.length ? "STRUCTURED DATA FROM PAGE:\n" + ld.join("\n") + "\n\n" : "") + "PAGE TEXT:\n" + t.slice(0, 28000);
+  if (blobs.length) out += "\n\nEMBEDDED PAGE DATA (may contain the ingredient list):\n" + blobs.join("\n").slice(0, maxChars - out.length > 0 ? 30000 : 0);
+  return out.slice(0, maxChars);
 }
