@@ -982,6 +982,7 @@ function dayCheck(){const t=today();if(t===_day)return;
  if(ui.sg.date===_day)ui.sg.date=t;if(ui.lu.date===_day)ui.lu.date=t;if(ui.ws===monday(_day))ui.ws=monday(t);
  ui.sg.picks=null;ui.lu.picks=null;_day=t;if(CLOUD.on)softRender()}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)dayCheck()});window.addEventListener('focus',dayCheck);setInterval(dayCheck,60000);
+if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 window.addEventListener('offline',()=>toast('Offline — changes will sync when you reconnect'));
 window.addEventListener('online',()=>toast('Back online'));
 
