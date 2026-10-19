@@ -251,6 +251,11 @@ input[type=range]{accent-color:var(--accent)}
 .pt .disc{box-shadow:0 0 0 3px var(--card),0 0 0 4px var(--ink)}
 .pt .ptt{font-size:13px;font-weight:700;line-height:1.2;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
 #pp_list{max-height:52vh}
+/* ---- sides & cakes ---- */
+.pe.side{background:transparent;color:var(--ink);border:1px dashed var(--accent);margin-left:18px;font-size:12px}
+.pe.side.done{opacity:.5}
+.sgs{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.sgsd{display:inline-flex;align-items:center;gap:7px}.sgst{font-weight:600;font-size:13px}
 /* ---- sign-in gate ---- */
 #gate{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
 #gate[hidden]{display:none}
@@ -393,7 +398,7 @@ function splitText(t){
  }
  return{ingredients:ing,method:met}}
 const ytId=u=>{const m=u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null};
-const APP_VERSION='2026-10-13 audit fixes v1';
+const APP_VERSION='2026-10-13 sides + cakes + instagram v1';
 async function importWeb(url,allowAI=true){
  const html=await fetchViaProxy(url);
  const doc=new DOMParser().parseFromString(html,'text/html');
@@ -460,7 +465,50 @@ async function importYT(url,id){
  }
  if(!r.ingredients.length&&!r.method.length)r.note=(r.note||'')+' No recipe was found for this video — paste the ingredients and method below.';
  r.raw=desc;return r}
-async function importURL(url){url=url.trim();if(!/^https?:\/\//i.test(url))url='https://'+url;const y=ytId(url);return y?importYT(url,y):importWeb(url)}
+const isInsta=u=>/^https?:\/\/([a-z0-9-]+\.)?instagram\.com\//i.test(u);
+// Instagram: the recipe is nearly always in the caption. We ask the server to read it from the public
+// post; if Instagram refuses (it often does), we set needCaption and the app opens the paste box.
+function captionToRecipe(x,url){
+ const ai=a=>(Array.isArray(a)?a:[]).map(v=>clean(v)).filter(Boolean);
+ const r={title:clean(x.title||'')||'Instagram recipe',url:url||'',source:url?'Instagram':'',image:'',time:+x.time_minutes||0,servings:+x.servings||0,
+  ingredients:ai(x.ingredients),method:ai(x.method),tags:Array.isArray(x.tags)?x.tags.slice(0,3).map(t=>String(t).toLowerCase()):[],diag:[],raw:x.caption||''};
+ r.diag.push('Claude read the caption: '+r.ingredients.length+' ingredients, '+r.method.length+' steps'+(x.problem?(' ('+x.problem+')'):''));
+ if(r.ingredients.length||r.method.length)r.note='Read from the Instagram caption by Claude. Give it a quick check.'+(x.problem?' '+x.problem:'');
+ if(x.truncated){r.partial=true;r.note=(r.note||'')+' Instagram only shared the start of this caption, so some of it may be missing — paste the full caption if so.'}
+ return r}
+async function importInsta(url){
+ let x=null,err='';
+ try{const resp=await authedFetch('/api/read-caption',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})});
+  try{x=await resp.json()}catch(e){}
+  if(!resp.ok||!x||x.error){err=(x&&x.error)||('the server answered '+resp.status);x=null}
+ }catch(e){err=(e&&e.message)||String(e)}
+ if(!x){return{title:'',url,source:'Instagram',image:'',time:0,servings:0,ingredients:[],method:[],tags:[],diag:['Instagram: '+err],needCaption:true,note:err}}
+ const r=captionToRecipe(x,url);
+ if(!r.ingredients.length&&!r.method.length){r.needCaption=true;r.note=x.problem||'No recipe was found in that caption.'}
+ return r}
+async function importURL(url){url=url.trim();if(!/^https?:\/\//i.test(url))url='https://'+url;const y=ytId(url);return y?importYT(url,y):isInsta(url)?importInsta(url):importWeb(url)}
+function captionModal(url,msg){
+ modal(`<h2>Paste the caption</h2>${msg?`<p class="status err" style="display:block">${esc(msg)}</p>`:''}<p class="mut sm" style="margin-top:0">On Instagram, open the reel, tap the caption (or <b>…</b>) and choose <b>Copy</b>. Then paste it here — the ingredients and method are picked out for you.</p>
+ <label class="f">Caption</label><textarea id="cap_text" style="min-height:200px" placeholder="Paste the whole caption…"></textarea>
+ <label class="f">Link to the reel (optional, kept as the source)</label><input type="url" id="cap_url" value="${esc(url||'')}">
+ <div class="status" id="capStatus"></div>
+ <div class="row" style="margin-top:12px"><button class="pri" data-act="capGo" id="capBtn">Read recipe</button><button data-act="close">Cancel</button></div>`)}
+async function readCaption(){
+ const text=val('cap_text').trim(),url=val('cap_url').trim(),st=$('#capStatus'),btn=$('#capBtn');
+ if(text.length<20){st.className='status err';st.textContent='Paste the caption text first.';return}
+ st.className='status';st.textContent='Reading…';btn.disabled=true;
+ let r=null,err='';
+ try{const resp=await authedFetch('/api/read-caption',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text,url})});
+  let x=null;try{x=await resp.json()}catch(e){}
+  if(!resp.ok||!x||x.error)err=(x&&x.error)||('the server answered '+resp.status);else r=captionToRecipe(x,url)
+ }catch(e){err=(e&&e.message)||String(e)}
+ if(!r||(!r.ingredients.length&&!r.method.length)){ // Claude unavailable or found nothing: try the simple splitter
+  const sp=splitText(text);
+  if(sp.ingredients.length||sp.method.length){r={title:'Instagram recipe',url,source:url?'Instagram':'',image:'',time:0,servings:0,ingredients:sp.ingredients,method:sp.method,tags:[],diag:[],raw:text,note:'Split from the caption without Claude'+(err?' ('+err+')':'')+' — please check it.'};r.partial=true}
+ }
+ btn.disabled=false;
+ if(!r){st.className='status err';st.textContent=err||'No recipe was found in that text.';return}
+ closeModal();afterImport(r)}
 
 /* ---------- screenshot import (Claude vision) ---------- */
 function shrink(file,max=1600){return new Promise((res,rej)=>{const img=new Image(),u=URL.createObjectURL(file);img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);res(c.toDataURL('image/jpeg',.85).split(',')[1])};img.onerror=()=>rej(new Error('Could not read that image'));img.src=u})}
@@ -527,9 +575,9 @@ function lastCooked(id,before){return S.log.filter(l=>l.recipeId===id&&l.date<=b
 function dropRecipe(id){const r=rec(id);
  S.log.forEach(l=>{if(l.recipeId===id&&!l.title&&!l.rt&&r)l.rt=r.title});
  S.recipes=S.recipes.filter(x=>x.id!==id);
- for(const k of Object.keys(S.plan)){S.plan[k]=S.plan[k].filter(e=>e.recipeId!==id||e.logged);if(!S.plan[k].length)delete S.plan[k]}}
-function mainOn(date){const l=S.log.find(x=>x.date===date&&x.meal!=='lunch'&&x.recipeId&&rec(x.recipeId));if(l)return protein(rec(l.recipeId));
- const p=(S.plan[date]||[]).find(x=>x.meal!=='lunch'&&x.recipeId&&rec(x.recipeId));return p?protein(rec(p.recipeId)):null}
+ for(const k of Object.keys(S.plan)){S.plan[k]=S.plan[k].filter(e=>e.recipeId!==id||e.logged);{const ids=new Set(S.plan[k].map(e=>e.id));S.plan[k]=S.plan[k].filter(e=>!e.sideOf||ids.has(e.sideOf))}if(!S.plan[k].length)delete S.plan[k]}}
+function mainOn(date){const l=S.log.find(x=>x.date===date&&x.meal!=='lunch'&&x.recipeId&&rec(x.recipeId)&&!isSideCake(rec(x.recipeId)));if(l)return protein(rec(l.recipeId));
+ const p=(S.plan[date]||[]).find(x=>x.meal!=='lunch'&&!x.sideOf&&x.recipeId&&rec(x.recipeId)&&!isSideCake(rec(x.recipeId)));return p?protein(rec(p.recipeId)):null}
 
 /* ---------- suggester ---------- */
 const splitCSV=s=>String(s||'').toLowerCase().split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
@@ -539,7 +587,8 @@ function filterRecipes(date){
  const avoid=splitCSV(R.avoid),need=splitCSV(R.needTags),skip=splitCSV(R.skipTags);
  const yProt=mainOn(addDays(date,-1));
  const rules=[
-  ['lunch-only recipe',r=>!(isLunch(r)&&!r.tags.some(t=>t.toLowerCase()==='dinner'))],
+  ['side dish or cake',r=>!isSideCake(r)],
+  ['lunch-only recipe',r=>!(isLunch(r)&&!hasTag(r,'dinner'))],
   [`eaten in the last ${R.noRepeatDays} days`,r=>{const l=lastCooked(r.id,date);const N=R.noRepeatDays*(r.status==='occasional'?2:1);return!(N>0&&l&&daysBetween(l,date)<N)}],
   ['already planned nearby',r=>{if(!R.skipPlanned)return true;for(let i=-3;i<=3;i++){if(i&&(S.plan[addDays(date,i)]||[]).some(p=>p.recipeId===r.id))return false}return true}],
   [`rated below ★${R.minAvgRating}`,r=>{const a=rstats(r.id).avg;return!(R.minAvgRating>0&&a>0&&a<R.minAvgRating)}],
@@ -553,6 +602,14 @@ function filterRecipes(date){
  const pool=[],removed={};
  for(const r of S.recipes){let ok=true;for(const [label,fn] of rules){if(!fn(r)){removed[label]=(removed[label]||0)+1;ok=false;break}}if(ok)pool.push(r)}
  return{pool,removed}}
+function sidesFor(r,date){
+ const tags=(r.tags||[]).map(x=>String(x).toLowerCase()),txt=((r.title||'')+' '+(r.ingredients||[]).join(' ')).toLowerCase();
+ return S.recipes.filter(x=>kindOf(x)==='side'&&x.id!==r.id).map(x=>{
+  let sc=Math.random(),why='';
+  for(const t of (x.tags||[]).map(y=>String(y).toLowerCase())){if(t==='side'||t==='sides')continue;if(tags.includes(t)||txt.includes(t)){sc+=3;why=why||t}}
+  const l=lastCooked(x.id,date);if(!l)sc+=1;else{const d=daysBetween(l,date);sc+=Math.min(d,60)/30;if(d<3)sc-=5}
+  const a=rstats(x.id).avg;if(a)sc+=(a-3)*.5;
+  return{r:x,sc,why}}).sort((a,b)=>b.sc-a.sc).slice(0,2)}
 function runSuggest(){
  const g=ui.sg,R=S.rules,date=g.date,{pool,removed}=filterRecipes(date);
  const pantry=splitCSV(g.pantry);
@@ -564,25 +621,25 @@ function runSuggest(){
   if(hits.length){s+=hits.length*2;why.push(`Uses your ${hits.join(', ')}`)}
   if(r.time)why.push(`${r.time} min`);
   return{r,s,why}}).sort((a,b)=>b.s-a.s);
- g.picks=scored.slice(0,3);g.removed=removed;g.poolN=pool.length}
+ g.picks=scored.slice(0,3);g.picks.forEach(p=>{p.sides=sidesFor(p.r,date)});g.removed=removed;g.poolN=pool.length}
 
 /* ---------- views ---------- */
 function gridHTML(){
  const q=ui.q.toLowerCase();
- const list=S.recipes.filter(r=>(!q||(r.title+' '+r.tags.join(' ')+' '+r.ingredients.join(' ')).toLowerCase().includes(q))&&(!ui.st||(ui.st==='none'?!r.status:r.status===ui.st)));
+ const list=S.recipes.filter(r=>(!ui.kind||kindOf(r)===ui.kind)&&(!q||(r.title+' '+r.tags.join(' ')+' '+r.ingredients.join(' ')).toLowerCase().includes(q))&&(!ui.st||(ui.st==='none'?!r.status:r.status===ui.st)));
  if(!S.recipes.length)return`<div class="empty"><div style="display:flex;justify-content:center;margin-bottom:14px">${clockSVG(56,true)}</div><p>No recipes yet. Paste a link above, add one by hand, or try a few samples.</p><button data-act="samples">Load 3 sample recipes</button></div>`;
  if(!list.length)return'<div class="empty">No recipes match that search.</div>';
  return'<div class="grid">'+list.map(r=>{const st=rstats(r.id);
-  return`<div class="card rc" data-act="openRecipe" data-id="${r.id}"><div class="img" ${r.image?`style="background-image:url('${esc(r.image)}')"`:''}>${r.image?'':''}</div><div class="b"><div class="t">${esc(r.title)}</div>${r.status?`<span class="chip">${STATUS[r.status].l}</span>`:''}
+  return`<div class="card rc" data-act="openRecipe" data-id="${r.id}"><div class="img" ${r.image?`style="background-image:url('${esc(r.image)}')"`:''}>${r.image?'':''}</div><div class="b"><div class="t">${esc(r.title)}</div>${kindOf(r)!=='main'?`<span class="chip">${KINDS[kindOf(r)]}</span> `:''}${r.status?`<span class="chip">${STATUS[r.status].l}</span>`:''}
   <div class="mut sm" style="display:flex;align-items:center;gap:7px">${r.time?dial(r.time)+r.time+' min · ':''}${r.url?esc(r.source||host(r.url)):'Mine'}</div>
   <div class="sm">${stars(st.avg)} ${st.n?`<span class="mut">cooked ${st.n}×</span>`:''}</div></div></div>`}).join('')+'</div>'}
 function viewRecipes(){
- return`<div class="card panel"><h2>Add a recipe</h2><p class="mut sm" style="margin:0 0 10px">Paste a recipe website or YouTube link — ingredients and method are split out automatically.</p>
- <div class="row"><input type="url" id="impUrl" placeholder="https://… or youtube.com/watch?v=…"><button class="pri" data-act="imp" id="impBtn">Import</button><button data-act="shot">From screenshot</button><button data-act="newRecipe">Add by hand</button><input type="file" id="shotFile" accept="image/*" multiple hidden></div>
+ return`<div class="card panel"><h2>Add a recipe</h2><p class="mut sm" style="margin:0 0 10px">Paste a recipe website or YouTube link — ingredients and method are split out automatically. Instagram reel? Use “Paste caption”.</p>
+ <div class="row"><input type="url" id="impUrl" placeholder="https://… or youtube.com/watch?v=…"><button class="pri" data-act="imp" id="impBtn">Import</button><button data-act="shot">From screenshot</button><button data-act="capPaste">Paste caption</button><button data-act="newRecipe">Add by hand</button><input type="file" id="shotFile" accept="image/*" multiple hidden></div>
  <div class="status" id="impStatus"></div></div>
  ${verdictBanner()}
  <div style="margin-top:14px"><input type="text" id="search" placeholder="Search recipes, tags, ingredients…" value="${esc(ui.q)}"></div>
- ${statusChips()}
+ ${kindChips()}${statusChips()}
  <div id="grid">${gridHTML()}</div>`}
 function viewShop(){
  const items=S.shopping,left=items.filter(i=>!i.done).length;
@@ -593,6 +650,8 @@ function viewShop(){
  for(const a of AISLES){const li=items.filter(i=>(i.aisle||'Other')===a);if(!li.length)continue;
   h+=`<div class="aisle">${a}</div>`+li.map(i=>`<div class="item ${i.done?'done':''}"><input type="checkbox" id="c${i.id}" data-act="shopToggle" data-id="${i.id}" ${i.done?'checked':''}><label for="c${i.id}">${esc(i.text)}${i.from?`<small>${esc(i.from)}</small>`:''}</label><button class="x" data-act="shopDel" data-id="${i.id}" title="Remove">×</button></div>`).join('')}
  return h}
+function planOrder(es){const ids=new Set(es.map(e=>e.id));const top=es.filter(e=>!e.sideOf||!ids.has(e.sideOf));
+ return top.flatMap(e=>[e,...es.filter(x=>x.sideOf===e.id)])}
 function viewPlan(){
  const t=today();
  let h=`<h2>Meal planner</h2><div class="row" style="margin:8px 0"><button data-act="shift" data-n="-1">‹ Back</button><button data-act="shift" data-n="0">This week</button><button data-act="shift" data-n="1">Next ›</button>
@@ -601,8 +660,8 @@ function viewPlan(){
   h+=`<div class="weekhd"><h3>${fmt(ws,{day:'numeric',month:'short'})} – ${fmt(addDays(ws,6),{day:'numeric',month:'short'})}</h3><button class="sm" data-act="weekShop" data-ws="${ws}">Add this week's ingredients to list</button></div><div class="week">`;
   for(let i=0;i<7;i++){const d=addDays(ws,i),es=S.plan[d]||[];
    h+=`<div class="day ${d===t?'today':''}"><div class="dh"><span>${fmt(d,{weekday:'short',day:'numeric'})}</span><button class="sm" data-act="planAdd" data-d="${d}">+</button></div>`+
-   es.map(e=>{const r=e.recipeId?rec(e.recipeId):null;const title=(e.meal==='lunch'?'Lunch · ':'')+(r?r.title:(e.text||'(deleted recipe)'));
-    return`<div class="pe ${e.logged?'done':''} ${e.meal==='lunch'?'lunch':''} ${r?'':'free'}">${disc(r,76)}<div class="pb">${r?`<a data-act="openRecipe" data-id="${r.id}">${esc(title)}</a>`:`<b>${esc(title)}</b>`}${rmeta(r)}<div class="ac">${e.logged?'<span class="mut">✓ logged</span>':`<button data-act="planLog" data-d="${d}" data-id="${e.id}" title="We ate this">✓ Ate it</button>`}<button data-act="planDel" data-d="${d}" data-id="${e.id}" title="Remove">×</button></div></div></div>`}).join('')+'</div>'}
+   planOrder(es).map(e=>{const r=e.recipeId?rec(e.recipeId):null;const title=(e.meal==='lunch'?'Lunch · ':'')+(r&&kindOf(r)==='cake'?'Cake · ':'')+(r?r.title:(e.text||'(deleted recipe)'));
+    return`<div class="pe ${e.logged?'done':''} ${e.meal==='lunch'?'lunch':''} ${e.sideOf?'side':''} ${r?'':'free'}">${disc(r,76)}<div class="pb">${r?`<a data-act="openRecipe" data-id="${r.id}">${esc(title)}</a>`:`<b>${esc(title)}</b>`}${rmeta(r)}<div class="ac">${e.logged?'<span class="mut">✓ logged</span>':`<button data-act="planLog" data-d="${d}" data-id="${e.id}" title="We ate this">✓ Ate it</button>`}${e.sideOf||e.meal==='lunch'||e.logged?'':`<button data-act="planSide" data-d="${d}" data-id="${e.id}" title="Add a side">+ side</button>`}<button data-act="planDel" data-d="${d}" data-id="${e.id}" title="Remove">×</button></div></div></div>`}).join('')+'</div>'}
   h+='</div>'}
  return h}
 function viewLog(){
@@ -610,7 +669,7 @@ function viewLog(){
  const rs=S.recipes.map(r=>({r,...rstats(r.id)})).filter(x=>x.n);
  const fav=rs.filter(x=>x.avg>=4).sort((a,b)=>b.avg-a.avg).slice(0,6);
  const most=[...rs].sort((a,b)=>b.n-a.n).slice(0,6);
- const t=today();const staleDays=Math.max(1,+S.rules.noRepeatDays||14);const stale=rs.filter(x=>daysBetween(x.last,t)>=staleDays).sort((a,b)=>a.last<b.last?-1:1).slice(0,6);
+ const t=today();const staleDays=Math.max(1,+S.rules.noRepeatDays||14);const stale=rs.filter(x=>!isSideCake(x.r)&&daysBetween(x.last,t)>=staleDays).sort((a,b)=>a.last<b.last?-1:1).slice(0,6);
  const chips=(a,f,none)=>a.length?`<div class="mini">`+a.map(x=>`<div class="mi" data-act="openRecipe" data-id="${x.r.id}">${disc(x.r,60,false)}<span class="mt">${esc(x.r.title)}</span><span class="mm">${f(x)}</span>${x.r.time?`<span class="mm">${x.r.time} min</span>`:''}</div>`).join('')+'</div>':`<span class="mut sm">${none||'Nothing yet'}</span>`;
  let h=`<div class="row" style="justify-content:space-between"><h2 style="margin:0">Logbook</h2><button class="pri" data-act="logAdd">+ Log a meal</button></div>
  <div class="stat"><div class="card"><b>Favourites</b><div style="margin-top:6px">${chips(fav,x=>'★'+x.avg.toFixed(1))}</div></div>
@@ -631,7 +690,7 @@ function viewTonight(){
  if(g.picks){
   if(!g.picks.length)h+=`<div class="empty">Nothing fits the rules right now${S.recipes.length?' — try loosening one below.':' — add some recipes first.'}</div>`;
   h+=g.picks.map((p,i)=>`<div class="card sg" style="margin-top:12px"><div class="sgi">${disc(p.r,128)}<div class="sgb"><div style="font-weight:700;font-size:20px;letter-spacing:-.02em">${esc(p.r.title)}</div>${rmeta(p.r,{cooked:true})}<div class="mut sm">${p.why.map(esc).join(' · ')}</div>
-  <div class="row" style="margin-top:10px"><button data-act="openRecipe" data-id="${p.r.id}">View</button><button class="pri" data-act="sgPlan" data-id="${p.r.id}">Plan it</button><button data-act="sgLog" data-id="${p.r.id}">Cooked it</button><button data-act="sgNo" data-id="${p.r.id}">Not this one</button></div></div></div></div>`).join('');
+  <div class="row" style="margin-top:10px"><button data-act="openRecipe" data-id="${p.r.id}">View</button><button class="pri" data-act="sgPlan" data-id="${p.r.id}">Plan it</button><button data-act="sgLog" data-id="${p.r.id}">Cooked it</button><button data-act="sgNo" data-id="${p.r.id}">Not this one</button></div>${p.sides&&p.sides.length?`<div class="sgs"><span class="mut sm">Goes well with</span>${p.sides.map(s=>`<span class="sgsd">${disc(s.r,40)}<span class="sgst">${esc(s.r.title)}</span><button class="sm" data-act="sgSide" data-id="${s.r.id}" data-main="${p.r.id}">+ Add</button></span>`).join('')}</div>`:''}</div></div></div>`).join('');
   const rm=Object.entries(g.removed||{});
   h+=`<p class="mut sm">${g.poolN} of ${S.recipes.length} recipes passed your rules${rm.length?` · filtered out: ${rm.map(([k,v])=>`${v} ${k}`).join(', ')}`:''}.</p>`}
  h+=`<details style="margin-top:20px" ${g.picks?'':'open'}><summary>Suggestion rules</summary><div class="card"><div class="rules">
@@ -672,6 +731,9 @@ function dueTests(){return S.recipes.filter(r=>r.status==='test'&&(rstats(r.id).
 function verdictBanner(){const d=dueTests();if(!d.length)return'';
  return`<div class="card" style="margin-top:14px;border-color:var(--accent)"><b>${d.length} test recipe${d.length===1?'':'s'} need a verdict</b><p class="mut sm" style="margin:2px 0 8px">Tried already, or sitting untested for 30+ days. Keep it or bin it?</p>`+
  d.map(r=>{const st=rstats(r.id);return`<div class="row" style="padding:6px 0;border-top:1px solid var(--line)"><a href="#" data-act="openRecipe" data-id="${r.id}" style="flex:1;min-width:140px"><b>${esc(r.title)}</b> <span class="mut sm">${st.n?`cooked ${st.n}×`:'not cooked yet'}</span> ${stars(st.avg)}</a><button class="sm" data-act="setStatus" data-id="${r.id}" data-s="staple">Staple</button><button class="sm" data-act="setStatus" data-id="${r.id}" data-s="occasional">Occasional</button><button class="sm danger" data-act="binRecipe" data-id="${r.id}">Bin</button></div>`}).join('')+'</div>'}
+function kindChips(){
+ const items=[['','All types'],['main','Mains'],['side','Sides'],['cake','Cakes & bakes'],['lunch','Lunch']];
+ return`<div class="row" style="margin-top:10px">${items.map(([k,l])=>`<button class="sm ${(ui.kind||'')===k?'pri':''}" data-act="kindFilter" data-k="${k}">${l} (${k?S.recipes.filter(r=>kindOf(r)===k).length:S.recipes.length})</button>`).join('')}</div>`}
 function statusChips(){
  const c=k=>S.recipes.filter(r=>k==='none'?!r.status:k?r.status===k:true).length;
  const items=[['','All'],['test','New tests'],['staple','Staples'],['occasional','Occasional'],['none','Unsorted']];
@@ -680,14 +742,19 @@ function verdictModal(id){const r=rec(id);if(!r)return;
  modal(`<h2 style="padding-right:30px">Verdict on “${esc(r.title)}”?</h2><p class="mut">This was a test recipe. Do we keep it?</p><div class="row" style="flex-direction:column;align-items:stretch"><button class="pri" data-act="setStatus" data-id="${id}" data-s="staple">Keep — one we'll make all the time</button><button data-act="setStatus" data-id="${id}" data-s="occasional">Keep — nice, but only now and then</button><button data-act="setStatus" data-id="${id}" data-s="test">Test it once more</button><button class="danger" data-act="binRecipe" data-id="${id}">Bin it</button><button data-act="close">Decide later</button></div>`)}
 
 /* ---------- lunch ---------- */
-function isLunch(r){return (r.tags||[]).some(t=>t.toLowerCase()==='lunch')}
+const KINDS={main:'Main',side:'Side',cake:'Cake & bakes',lunch:'Lunch'};
+const hasTag=(r,t)=>(r.tags||[]).some(x=>String(x).toLowerCase()===t);
+// A recipe's type. Older recipes have none: a "lunch" tag means Lunch, everything else is a Main.
+const kindOf=r=>KINDS[r.kind]?r.kind:(hasTag(r,'lunch')?'lunch':'main');
+const isSideCake=r=>{const k=kindOf(r);return k==='side'||k==='cake'};
+function isLunch(r){return kindOf(r)==='lunch'}
 function runLunch(){
  const g=ui.lu,L=S.lunch,R=S.rules,date=g.date;
  const avoid=splitCSV(R.avoid),pantry=splitCSV(g.pantry),removed={},scored=[];let poolN=0;
  const lastL=id=>S.log.filter(l=>l.recipeId===id&&l.meal==='lunch'&&l.date<=date).map(l=>l.date).sort().pop()||null;
  const cnt=k=>{removed[k]=(removed[k]||0)+1};
  for(const r of S.recipes){
-  if(!(isLunch(r)||L.incAll))continue;
+  if(isSideCake(r)||!(isLunch(r)||L.incAll))continue;
   const st=rstats(r.id),last=lastL(r.id);
   if(L.noRepeatDays>0&&last&&daysBetween(last,date)<L.noRepeatDays){cnt(`had for lunch in the last ${L.noRepeatDays} days`);continue}
   if(L.maxTime>0&&r.time>0&&r.time>L.maxTime){cnt('too long for lunch');continue}
@@ -742,19 +809,21 @@ function editRecipe(id,draft,msg){
  <div class="row"><div style="flex:1;min-width:120px"><label class="f">Time (min)</label><input type="number" id="e_time" value="${r.time||''}"></div><div style="flex:1;min-width:120px"><label class="f">Serves</label><input type="number" id="e_serv" value="${r.servings||''}"></div></div>
  <label class="f">Source link</label><input type="url" id="e_url" value="${esc(r.url||'')}">
  <label class="f">Photo</label><div class="row"><img id="e_prev" alt="" src="${esc(r.image||'')}" style="width:96px;aspect-ratio:1;object-fit:cover;border-radius:50%;background:var(--chip);${r.image?'':'display:none'}" onerror="this.style.display='none'"><button data-act="pickPhoto">Add / change photo</button><button class="sm" data-act="clearPhoto">Remove</button></div><input type="hidden" id="e_img" value="${esc(r.image||'')}">
- <label class="f">Tags (comma separated, e.g. quick, family, lunch — “lunch” puts it in the Lunch tab)</label><input type="text" id="e_tags" value="${esc((r.tags||[]).join(', '))}">
+ <label class="f">Type</label><select id="e_kind">${Object.entries(KINDS).map(([k,l])=>`<option value="${k}" ${k===kindOf(r)?'selected':''}>${l}</option>`).join('')}</select>
+ <label class="f">Tags (comma separated, e.g. quick, family, potatoes, salad — sides are matched to mains by shared tags and ingredients)</label><input type="text" id="e_tags" value="${esc((r.tags||[]).join(', '))}">
  <label class="f">Status</label><select id="e_status">${['','test','staple','occasional'].map(k=>`<option value="${k}" ${k===(r.status!==undefined?r.status:(id?'':'test'))?'selected':''}>${k?STATUS[k].l:'Unsorted'}</option>`).join('')}</select>
  <label class="f">Ingredients (one per line)</label><textarea id="e_ing">${esc(r.ingredients.join('\n'))}</textarea>
  <label class="f">Method (one step per line)</label><textarea id="e_met">${esc(r.method.join('\n'))}</textarea>
  <details style="margin-top:8px"><summary class="sm">Paste raw text and auto-split</summary><textarea id="e_raw" placeholder="Paste a whole recipe or video description — lines under “Ingredients” and “Method” headings are split out for you">${esc(r.raw||'')}</textarea><button data-act="split" style="margin-top:6px">Split into ingredients / method</button></details>
  <div class="row" style="margin-top:16px"><button class="pri" data-act="saveRecipe" data-id="${id||''}">Save recipe</button><button data-act="close">Cancel</button></div>`)}
 function pickDate(title,cb,def){window._cb=cb;modal(`<h2>${esc(title)}</h2><label class="f">Date</label><input type="date" id="pd" value="${def||today()}"><div class="row" style="margin-top:14px"><button class="pri" data-act="pdOk">Save</button><button data-act="close">Cancel</button></div>`)}
-function planPicker(d){
- modal(`<h2>Plan ${fmt(d,{weekday:'long',day:'numeric',month:'short'})}</h2><select id="pp_meal" style="margin-bottom:8px"><option value="">Dinner</option><option value="lunch">Lunch</option></select><input type="text" id="pp_q" placeholder="Search your recipes…" data-d="${d}">
- <div id="pp_list" style="margin-top:8px;max-height:45vh;overflow:auto">${ppList(d,'')}</div>
- <label class="f">…or something else (takeaway, leftovers, eating out)</label><div class="row"><input type="text" id="pp_free" placeholder="Takeaway"><button data-act="planFree" data-d="${d}">Add</button></div>`)}
-function ppList(d,q){q=q.toLowerCase();const l=S.recipes.filter(r=>!q||r.title.toLowerCase().includes(q));
- return l.length?'<div class="ptiles">'+l.map(r=>`<button class="pt" data-act="planPick" data-d="${d}" data-id="${r.id}">${disc(r,76,false)}<span class="ptt">${esc(r.title)}</span>${rmeta(r)}</button>`).join('')+'</div>':'<p class="mut">No recipes found.</p>'}
+function planPicker(d,sideOf){
+ const side=sideOf||'';
+ modal(`<h2>${side?'Add a side to '+fmt(d,{weekday:'long',day:'numeric',month:'short'}):'Plan '+fmt(d,{weekday:'long',day:'numeric',month:'short'})}</h2>${side?'<input type="hidden" id="pp_meal" value="">':`<div class="row" style="margin-bottom:8px"><select id="pp_meal" style="flex:1"><option value="">Dinner</option><option value="lunch">Lunch</option></select><select id="pp_kind" style="flex:1"><option value="">All types</option><option value="main">Mains</option><option value="side">Sides</option><option value="cake">Cakes & bakes</option><option value="lunch">Lunch</option></select></div>`}<input type="text" id="pp_q" placeholder="Search your recipes…" data-d="${d}" data-side="${side}">
+ <div id="pp_list" style="margin-top:8px;max-height:45vh;overflow:auto">${ppList(d,'','',side)}</div>
+ <label class="f">…or something else (${side?'rice, bread, salad':'takeaway, leftovers, eating out'})</label><div class="row"><input type="text" id="pp_free" placeholder="${side?'Green salad':'Takeaway'}"><button data-act="planFree" data-d="${d}" data-side="${side}">Add</button></div>`)}
+function ppList(d,q,kind,side){q=q.toLowerCase();const k=side?'side':(kind||'');const l=S.recipes.filter(r=>(!q||r.title.toLowerCase().includes(q))&&(!k||kindOf(r)===k));
+ return l.length?'<div class="ptiles">'+l.map(r=>`<button class="pt" data-act="planPick" data-d="${d}" data-id="${r.id}" data-side="${side||''}">${disc(r,76,false)}<span class="ptt">${esc(r.title)}</span>${rmeta(r)}</button>`).join('')+'</div>':'<p class="mut">'+(side?'No sides yet — add a recipe and set its Type to Side.':'No recipes found.')+'</p>'}
 function logModal(id,pre){
  const e=id?S.log.find(l=>l.id===id):Object.assign({date:today(),recipeId:'',title:'',rating:0,notes:''},pre||{});
  window._logMeal=e.meal||'';modal(`<h2>${id?'Edit entry':'Log a meal'}</h2><label class="f">Date</label><input type="date" id="l_date" value="${e.date}">
@@ -766,13 +835,19 @@ function logModal(id,pre){
 
 /* ---------- actions ---------- */
 const val=id=>$('#'+id)?.value??'';
+function afterImport(r){
+ const btn=$('#impBtn'),st=$('#impStatus');if(btn)btn.disabled=false;if(st)st.textContent='';
+ if(r.ingredients.length&&r.method.length&&!r.partial){
+  if(r.url&&S.recipes.some(x=>x.url===r.url)&&!confirm('This link is already in your recipes. Add it again?'))return;
+  delete r.diag;delete r.raw;delete r.partial;delete r.needCaption;const note=r.note;delete r.note;r.id=uid();r.added=today();r.status='test';S.recipes.unshift(r);save();render();
+  toast(note&&/by Claude/.test(note)?'Imported with Claude’s help — please check it. Marked as a new test':'Recipe imported — marked as a new test');openRecipe(r.id)}
+ else{const d=r.diag;delete r.partial;editRecipe(null,r,(r.note||'We found part of the recipe — please check and fill in what\'s missing, then save.')+(d&&d.length?' [Details: '+d.join('; ')+']':''))}}
 async function doImport(){
  const url=val('impUrl').trim();if(!url)return;const st=$('#impStatus'),btn=$('#impBtn');
  st.className='status';st.textContent='Fetching… this can take up to 30 seconds.';btn.disabled=true;
  try{const r=await importURL(url);
-  if(r.ingredients.length&&r.method.length){if(r.url&&S.recipes.some(x=>x.url===r.url)&&!confirm('This link is already in your recipes. Add it again?')){btn.disabled=false;st.textContent='';return}
-  delete r.diag;delete r.raw;delete r.note0;const note=r.note;delete r.note;r.id=uid();r.added=today();r.status='test';S.recipes.unshift(r);save();render();toast(note&&/Read from the page by Claude/.test(note)?'Imported with Claude’s help — please check it. Marked as a new test':'Recipe imported — marked as a new test');openRecipe(r.id)}
-  else{btn.disabled=false;st.textContent='';editRecipe(null,r,(r.note||'We found part of the recipe — please check and fill in what\'s missing, then save.')+(r.diag&&r.diag.length?' [Details: '+r.diag.join('; ')+']':''))}
+  if(r.needCaption){btn.disabled=false;st.textContent='';captionModal(r.url||url,'Instagram wouldn’t let the app read this one'+(r.note?' ('+r.note.replace(/\.$/,'')+')':'')+'. Copy the caption and paste it below instead.');return}
+  afterImport(r)
  }catch(e){btn.disabled=false;st.className='status err';st.innerHTML='Couldn\'t load that link ('+esc(e.message)+'). Some sites block automated readers — use “Add by hand” and paste the text instead.'}
 }
 function saveRecipeForm(id){
@@ -780,8 +855,8 @@ function saveRecipeForm(id){
  const lines=(s,m)=>s.split(/\r?\n/).map(x=>x.trim().replace(m?/^\d+[.)]\s*/:/^$/,'')).filter(Boolean);
  const r={title:val('e_title').trim()||'Untitled recipe',url:val('e_url').trim(),image:val('e_img').trim(),time:+val('e_time')||0,servings:+val('e_serv')||0,
   tags:val('e_tags').split(',').map(t=>t.trim().toLowerCase()).filter(Boolean),ingredients:lines(val('e_ing')),method:lines(val('e_met'),true)};
- r.source=r.url?(ytId(r.url)?'YouTube':host(r.url)):'';
- r.status=val('e_status');
+ r.source=r.url?(ytId(r.url)?'YouTube':isInsta(r.url)?'Instagram':host(r.url)):'';
+ r.status=val('e_status');r.kind=KINDS[val('e_kind')]?val('e_kind'):'main';
  if(id){Object.assign(rec(id),r)}else{r.id=uid();r.added=today();S.recipes.unshift(r)}
  save();closeModal();render();toast('Saved')}
 function act(a,d,el){
@@ -789,6 +864,8 @@ function act(a,d,el){
  case'tab':ui.tab=d.tab;render();window.scrollTo(0,0);break;
  case'close':closeModal();break;
  case'imp':doImport();break;
+ case'capPaste':captionModal(val('impUrl').trim());break;
+ case'capGo':readCaption();break;
  case'newRecipe':editRecipe(null);break;
  case'samples':loadSamples();break;
  case'openRecipe':openRecipe(d.id);break;
@@ -812,11 +889,14 @@ function act(a,d,el){
  case'shift':ui.ws=+d.n===0?monday(today()):addDays(ui.ws,+d.n*7*(ui.weeks>1?ui.weeks:1));render();break;
  case'weeksView':ui.weeks=+d.n;render();break;
  case'planAdd':planPicker(d.d);break;
- case'planPick':addPlan(d.d,{recipeId:d.id,meal:val('pp_meal')});closeModal();render();break;
- case'planFree':{const v=val('pp_free').trim();if(v){addPlan(d.d,{text:v,meal:val('pp_meal')});closeModal();render()}break}
- case'planDel':S.plan[d.d]=(S.plan[d.d]||[]).filter(e=>e.id!==d.id);save();render();break;
+ case'planSide':planPicker(d.d,d.id);break;
+ case'planPick':addPlan(d.d,Object.assign({recipeId:d.id,meal:val('pp_meal')},d.side?{sideOf:d.side}:{}));closeModal();render();break;
+ case'planFree':{const v=val('pp_free').trim();if(v){addPlan(d.d,Object.assign({text:v,meal:val('pp_meal')},d.side?{sideOf:d.side}:{}));closeModal();render()}break}
+ case'planDel':S.plan[d.d]=(S.plan[d.d]||[]).filter(e=>e.id!==d.id&&e.sideOf!==d.id);save();render();break;
  case'planLog':{const e=(S.plan[d.d]||[]).find(x=>x.id===d.id);if(!e)break;
-  const l={id:uid(),date:d.d,recipeId:e.recipeId||'',title:e.text||'',rating:0,notes:'',meal:e.meal||''};S.log.push(l);e.logged=true;save();render();logModal(l.id);break}
+  const l={id:uid(),date:d.d,recipeId:e.recipeId||'',title:e.text||'',rating:0,notes:'',meal:e.meal||''};S.log.push(l);e.logged=true;
+  if(!e.sideOf)(S.plan[d.d]||[]).filter(x=>x.sideOf===e.id&&!x.logged).forEach(x=>{S.log.push({id:uid(),date:d.d,recipeId:x.recipeId||'',title:x.text||'',rating:0,notes:'',meal:''});x.logged=true});
+  save();render();logModal(l.id);break}
  case'weekShop':{let n=0;for(let i=0;i<7;i++)for(const e of S.plan[addDays(d.ws,i)]||[]){const r=e.recipeId&&rec(e.recipeId);if(r&&!e.logged)n+=addToShop(r.ingredients,r.title)}
   toast(n?`${n} item${n===1?'':'s'} added to the shopping list`:'Nothing new to add');break}
  /* log */
@@ -835,8 +915,13 @@ function act(a,d,el){
  case'suggest':ui.sg.ex=new Set();runSuggest();render();break;
  case'sgNo':ui.sg.ex.add(d.id);runSuggest();render();break;
  case'sgPlan':addPlan(ui.sg.date,{recipeId:d.id});toast('Planned for '+fmt(ui.sg.date,{weekday:'long',day:'numeric',month:'short'}));break;
+ case'sgSide':{const date=ui.sg.date;let par=(S.plan[date]||[]).find(e=>e.recipeId===d.main&&!e.sideOf);
+  if(!par){addPlan(date,{recipeId:d.main});par=S.plan[date].find(e=>e.recipeId===d.main&&!e.sideOf)}
+  if(!(S.plan[date]||[]).some(e=>e.sideOf===par.id&&e.recipeId===d.id))addPlan(date,{recipeId:d.id,sideOf:par.id});
+  toast('Planned with a side for '+fmt(date,{weekday:'long',day:'numeric',month:'short'}));render();break}
  case'sgLog':logModal(null,{recipeId:d.id,date:ui.sg.date});break;
  case'shot':$('#shotFile').click();break;
+ case'kindFilter':ui.kind=d.k;render();break;
  case'stFilter':ui.st=d.s;render();break;
  case'setStatus':{const r=rec(d.id);if(!r)break;r.status=d.s;save();render();if(d.keep)openRecipe(d.id);else closeModal();toast(r.status?STATUS[r.status].l+' ✓':'Status cleared');break}
  case'binRecipe':{const r=rec(d.id);if(!r)break;if(!confirm('Bin “'+r.title+'”? Past log entries are kept.'))break;
@@ -856,7 +941,7 @@ function act(a,d,el){
 document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;if(b.tagName==='A')e.preventDefault();act(b.dataset.act,b.dataset,b)});
 document.addEventListener('input',e=>{
  if(e.target.id==='search'){ui.q=e.target.value;$('#grid').innerHTML=gridHTML()}
- if(e.target.id==='pp_q'){$('#pp_list').innerHTML=ppList(e.target.dataset.d,e.target.value)}
+ if(e.target.id==='pp_q'||e.target.id==='pp_kind'){const q=$('#pp_q');$('#pp_list').innerHTML=ppList(q.dataset.d,q.value,val('pp_kind'),q.dataset.side)}
  if(e.target.id==='sgPantry')ui.sg.pantry=e.target.value;
  if(e.target.id==='luPantry')ui.lu.pantry=e.target.value;
 });
@@ -872,7 +957,7 @@ document.addEventListener('change',e=>{const t=e.target;
 });
 document.addEventListener('keydown',e=>{
  if(e.key==='Escape')closeTop();
- if(e.key==='Enter'){if(e.target.id==='impUrl')doImport();if(e.target.id==='shopNew')act('shopAdd',{});if(e.target.id==='pp_free')act('planFree',{d:$('#pp_q')?.dataset.d})}
+ if(e.key==='Enter'){if(e.target.id==='impUrl')doImport();if(e.target.id==='shopNew')act('shopAdd',{});if(e.target.id==='pp_free')act('planFree',{d:$('#pp_q')?.dataset.d,side:$('#pp_q')?.dataset.side})}
 });
 document.addEventListener('paste',e=>{if(ui.tab!=='recipes'||document.querySelector('.ov'))return;
  const fs=[...(e.clipboardData?.files||[])].filter(f=>f.type.startsWith('image/'));if(fs.length){e.preventDefault();importScreens(fs)}});
@@ -914,6 +999,7 @@ function syncUp(){
 const STATUSES=['','test','staple','occasional'];
 function normRecipe(r){['tags','ingredients','method'].forEach(k=>{if(!Array.isArray(r[k]))r[k]=[]});
  if(r.status&&!STATUSES.includes(r.status))r.status='';
+ if(r.kind&&!KINDS[r.kind])delete r.kind;
  r.title=r.title||'Untitled recipe';return r}
 // Applies a snapshot of one collection from the cloud. Returns true if anything changed.
 function applyCol(col,docs){
